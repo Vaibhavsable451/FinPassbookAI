@@ -1,0 +1,253 @@
+{
+  "name": "AI Finance Assistant Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "finance-assistant-chat",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "8f1a1a10-0001-4a1a-9a10-000000000001",
+      "name": "Chat Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-200, 300],
+      "webhookId": "finance-assistant-chat"
+    },
+    {
+      "parameters": {
+        "model": "qwen/qwen3.6-27b",
+        "options": {
+          "temperature": 0
+        }
+      },
+      "id": "8f1a1a10-0002-4a1a-9a10-000000000002",
+      "name": "Groq Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [0, 560],
+      "credentials": {
+        "groqApi": {
+          "id": "GROQ_CRED_ID",
+          "name": "Groq account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $json.body.sessionId || 'default-session' }}",
+        "contextWindowLength": 15
+      },
+      "id": "8f1a1a10-0003-4a1a-9a10-000000000003",
+      "name": "Chat Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [160, 560]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Transactions",
+          "mode": "list"
+        },
+        "operation": "append",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date": "={{ $now.toISODate() }}",
+            "Category": "={{ $fromAI('category', 'Expense category e.g. Food, Rent, Travel', 'string') }}",
+            "Amount": "={{ $fromAI('amount', 'Transaction amount as a number, e.g. 500', 'string') }}",
+            "Note": "={{ $fromAI('note', 'Short description of the transaction', 'string') }}",
+            "Type": "={{ $fromAI('type', 'Income or Expense', 'string') }}"
+          }
+        }
+      },
+      "id": "8f1a1a10-0004-4a1a-9a10-000000000004",
+      "name": "Log Transaction (Sheets Tool)",
+      "type": "n8n-nodes-base.googleSheetsTool",
+      "typeVersion": 4.5,
+      "position": [320, 560],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GSHEETS_CRED_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Transactions",
+          "mode": "list"
+        },
+        "operation": "read",
+        "options": {}
+      },
+      "id": "8f1a1a10-0005-4a1a-9a10-000000000005",
+      "name": "Read Transactions (Sheets Tool)",
+      "type": "n8n-nodes-base.googleSheetsTool",
+      "typeVersion": 4.5,
+      "position": [480, 560],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GSHEETS_CRED_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "YOUR_EMAIL@example.com",
+        "subject": "={{ $fromAI('subject', 'Email subject line - either a transaction confirmation or a finance summary') }}",
+        "message": "={{ $fromAI('body', 'Full HTML or plain text body of the email - either a short transaction confirmation or a finance summary') }}",
+        "options": {}
+      },
+      "id": "8f1a1a10-0006-4a1a-9a10-000000000006",
+      "name": "Send Finance Report (Gmail Tool)",
+      "type": "n8n-nodes-base.gmailTool",
+      "typeVersion": 2.1,
+      "position": [640, 560],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CRED_ID",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.body.message }}",
+        "options": {
+          "systemMessage": "You are a personal AI Finance Assistant. You help the user track expenses/income, analyze spending patterns, set and monitor budgets, and send email summaries.\n\nCapabilities via tools:\n1. Log Transaction (Sheets Tool) - use this whenever the user reports spending or receiving money. Always infer category, amount, note, and type (Income/Expense).\n2. Read Transactions (Sheets Tool) - use this to fetch all logged transactions when the user asks about totals, spending by category, balance, or trends. Compute the analysis yourself from the returned rows.\n3. Send Finance Report (Gmail Tool) - sends an email. Use it in TWO cases: (a) automatically, right after every successful Log Transaction call, to send a short confirmation email of that single transaction (subject like 'Expense logged: Groceries - ₹500', body with date/category/amount/note/type); (b) whenever the user explicitly asks for a summary/report email, in which case compose a fuller summary instead.\n\nRules:\n- Call only ONE tool at a time. Wait for its result before deciding whether to call another tool. Never attempt to call two tools in the same turn.\n- Every time you log a transaction, you MUST also call Send Finance Report immediately after (as a separate, subsequent tool call) with a short confirmation email for that transaction. Do not skip this step.\n- Always confirm what you logged (category, amount, type) in a short line after saving, and mention that a confirmation email was sent.\n- When asked for insights, do the math yourself (totals, % of budget, top categories) — never guess numbers.\n- Keep replies concise, use INR (₹) unless the user specifies another currency.\n- If information is missing (e.g. amount), ask a brief clarifying question instead of guessing."
+        }
+      },
+      "id": "8f1a1a10-0007-4a1a-9a10-000000000007",
+      "name": "Finance AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.9,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"reply\": $json.output } }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              }
+            ]
+          }
+        }
+      },
+      "id": "8f1a1a10-0008-4a1a-9a10-000000000008",
+      "name": "Respond to Chat",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.2,
+      "position": [520, 300]
+    }
+  ],
+  "connections": {
+    "Chat Webhook": {
+      "main": [
+        [
+          {
+            "node": "Finance AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Finance AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "Finance AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Transaction (Sheets Tool)": {
+      "ai_tool": [
+        [
+          {
+            "node": "Finance AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Transactions (Sheets Tool)": {
+      "ai_tool": [
+        [
+          {
+            "node": "Finance AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Finance Report (Gmail Tool)": {
+      "ai_tool": [
+        [
+          {
+            "node": "Finance AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finance AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Respond to Chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "instanceId": "finance-assistant-instance"
+  }
+}
